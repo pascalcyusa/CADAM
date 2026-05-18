@@ -8,6 +8,8 @@ export function requiredEnv(name: string): string {
   return value;
 }
 
-export function webhookBaseUrl(): string {
-  return requiredEnv('WEBHOOK_BASE_URL').replace(/\/$/, '');
+export function webhookBaseUrl(requestUrl: string): string {
+  const configuredUrl = env('WEBHOOK_BASE_URL');
+  if (configuredUrl) return configuredUrl.replace(/\/$/, '');
+  return new URL(requestUrl).origin;
 }

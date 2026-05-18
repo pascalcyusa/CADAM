@@ -739,7 +739,7 @@ export async function handleCreativeChatRequest(req: Request) {
 
                   let appBaseUrl: string;
                   try {
-                    appBaseUrl = webhookBaseUrl();
+                    appBaseUrl = webhookBaseUrl(req.url);
                   } catch (error) {
                     await refundChatToken();
                     logError(error, {

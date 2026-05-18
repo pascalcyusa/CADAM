@@ -458,7 +458,7 @@ export async function handleMeshRequest(req: Request) {
       );
     }
 
-    const appBaseUrl = webhookBaseUrl();
+    const appBaseUrl = webhookBaseUrl(req.url);
     const meshReferenceId = crypto.randomUUID();
     try {
       const result = await billing.consume(userData.user.email, {
