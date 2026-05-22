@@ -1,8 +1,18 @@
 import { Button } from '@/components/ui/button';
+import {
+  Sheet,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { Separator } from '@/components/ui/separator';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { cn } from '@/lib/utils';
+import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { ChevronsRight } from 'lucide-react';
 import {
   type ReactNode,
+  type TouchEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -22,11 +32,16 @@ const PANEL_SIZES = {
   PREVIEW: { DEFAULT: 45, MIN: 20 },
   PARAMETERS: { DEFAULT: 30, MIN: 320, MAX: 384 },
 } as const;
+const MOBILE_SHEET_DISMISS_THRESHOLD = 48;
 
 interface ConversationViewProps {
   chatPanelSlot: ReactNode;
   previewSlot: ReactNode;
   parametersSlot: ReactNode;
+  mobilePreviewSlot?: ReactNode;
+  mobileParametersSlot?: ReactNode;
+  mobilePreviewKey?: string | null;
+  mobilePreviewVersion?: number;
   /**
    * Drives the right-hand parameters panel: when false the panel collapses to
    * 0 and its resize handle stays inert. Editor uses this to show parameters
@@ -52,6 +67,10 @@ export function ConversationView({
   chatPanelSlot,
   previewSlot,
   parametersSlot,
+  mobilePreviewSlot,
+  mobileParametersSlot,
+  mobilePreviewKey = null,
+  mobilePreviewVersion = 0,
   hasParameters,
 }: ConversationViewProps) {
   const chatPanelRef = useRef<ImperativePanelHandle>(null);
@@ -60,6 +79,13 @@ export function ConversationView({
   const [containerWidth, setContainerWidth] = useState(0);
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
   const [isParametersCollapsed, setIsParametersCollapsed] = useState(false);
+  const [isMobilePreviewOpen, setIsMobilePreviewOpen] = useState(false);
+  const [isDraggingMobileSheet, setIsDraggingMobileSheet] = useState(false);
+  const [mobileSheetDragDistance, setMobileSheetDragDistance] = useState(0);
+  const mobileSheetTouchStartYRef = useRef(0);
+  const isDraggingMobileSheetRef = useRef(false);
+  const didDragMobileSheetRef = useRef(false);
+  const isTabletOrMobile = useMediaQuery('(max-width: 1024px)');
 
   const setContainerRef = useCallback((element: HTMLDivElement | null) => {
     resizeObserverRef.current?.disconnect();
@@ -142,6 +168,153 @@ export function ConversationView({
     parametersPanelRef.current?.expand();
     setIsParametersCollapsed(false);
   }, []);
+
+  useEffect(() => {
+    setIsMobilePreviewOpen(!!mobilePreviewKey);
+  }, [mobilePreviewKey, mobilePreviewVersion]);
+
+  const handleMobilePreviewOpenChange = useCallback((open: boolean) => {
+    setIsMobilePreviewOpen(open);
+    if (!open) {
+      setMobileSheetDragDistance(0);
+      setIsDraggingMobileSheet(false);
+      isDraggingMobileSheetRef.current = false;
+      didDragMobileSheetRef.current = false;
+    }
+  }, []);
+
+  const handleMobileSheetTouchStart = useCallback((event: TouchEvent) => {
+    mobileSheetTouchStartYRef.current = event.touches[0].clientY;
+    isDraggingMobileSheetRef.current = true;
+    didDragMobileSheetRef.current = false;
+    setIsDraggingMobileSheet(true);
+  }, []);
+
+  const handleMobileSheetTouchMove = useCallback((event: TouchEvent) => {
+    if (!isDraggingMobileSheetRef.current) return;
+    const dragDistance =
+      event.touches[0].clientY - mobileSheetTouchStartYRef.current;
+    didDragMobileSheetRef.current ||= Math.abs(dragDistance) > 4;
+    setMobileSheetDragDistance(dragDistance);
+  }, []);
+
+  const handleMobileSheetTouchEnd = useCallback(() => {
+    if (!isDraggingMobileSheetRef.current) return;
+    isDraggingMobileSheetRef.current = false;
+    if (mobileSheetDragDistance >= MOBILE_SHEET_DISMISS_THRESHOLD) {
+      handleMobilePreviewOpenChange(false);
+      return;
+    }
+    setMobileSheetDragDistance(0);
+    setIsDraggingMobileSheet(false);
+  }, [handleMobilePreviewOpenChange, mobileSheetDragDistance]);
+
+  const handleMobileSheetTouchCancel = useCallback(() => {
+    isDraggingMobileSheetRef.current = false;
+    didDragMobileSheetRef.current = false;
+    setMobileSheetDragDistance(0);
+    setIsDraggingMobileSheet(false);
+  }, []);
+
+  const handleMobileSheetHandleClick = useCallback(() => {
+    if (didDragMobileSheetRef.current) {
+      didDragMobileSheetRef.current = false;
+      return;
+    }
+    handleMobilePreviewOpenChange(false);
+  }, [handleMobilePreviewOpenChange]);
+
+  const mobileSheetHeight = useMemo(() => {
+    if (!isDraggingMobileSheet) return 'calc(100dvh - 56px)';
+    if (mobileSheetDragDistance <= 0) return 'calc(100dvh - 56px)';
+    return `${Math.max(56, window.innerHeight - 56 - mobileSheetDragDistance)}px`;
+  }, [isDraggingMobileSheet, mobileSheetDragDistance]);
+
+  if (isTabletOrMobile) {
+    return (
+      <div
+        className="relative h-full w-full overflow-hidden bg-[#292828]"
+        ref={setContainerRef}
+      >
+        <div className="flex h-full min-w-0 flex-col items-center bg-adam-bg-secondary-dark">
+          {chatPanelSlot}
+        </div>
+
+        <Sheet
+          open={!!mobilePreviewKey && isMobilePreviewOpen}
+          onOpenChange={handleMobilePreviewOpenChange}
+        >
+          <SheetPrimitive.Portal>
+            <SheetPrimitive.Content
+              className={cn(
+                'fixed z-50 shadow-[0_0_10px_rgba(0,0,0,0.5)] transition ease-in-out data-[state=closed]:duration-300 data-[state=open]:duration-500 data-[state=open]:animate-in data-[state=closed]:animate-out',
+                'inset-x-0 bottom-0 data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
+                'rounded-t-3xl bg-adam-bg-secondary-dark',
+              )}
+              style={{ height: mobileSheetHeight }}
+            >
+              <SheetHeader className="hidden">
+                <SheetTitle>Model preview</SheetTitle>
+                <SheetDescription>
+                  Preview and parameters for the selected model.
+                </SheetDescription>
+              </SheetHeader>
+              <button
+                type="button"
+                aria-label="Close preview"
+                onTouchStart={handleMobileSheetTouchStart}
+                onTouchMove={handleMobileSheetTouchMove}
+                onTouchEnd={handleMobileSheetTouchEnd}
+                onTouchCancel={handleMobileSheetTouchCancel}
+                onClick={handleMobileSheetHandleClick}
+                className="flex w-full justify-center rounded-sm opacity-70 transition-opacity hover:opacity-100"
+              >
+                <svg
+                  width="32"
+                  height="32"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M21.5262 10.75L11.9999 16L2.47363 10.75"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeWidth="2"
+                    className="text-adam-neutral-400"
+                  />
+                </svg>
+              </button>
+              <div className="mx-auto flex h-full max-w-xl flex-col items-center pb-6">
+                <div
+                  className={cn(
+                    'w-full px-4',
+                    hasParameters
+                      ? 'h-[40dvh] min-h-[40dvh]'
+                      : 'min-h-[52dvh] flex-1',
+                  )}
+                >
+                  <div className="h-full w-full overflow-hidden rounded-xl">
+                    {mobilePreviewSlot ?? previewSlot}
+                  </div>
+                </div>
+                {hasParameters && (
+                  <>
+                    <div className="w-full px-4">
+                      <Separator className="w-full bg-adam-neutral-700" />
+                    </div>
+                    <div className="min-h-0 w-full flex-1">
+                      {mobileParametersSlot ?? parametersSlot}
+                    </div>
+                  </>
+                )}
+              </div>
+            </SheetPrimitive.Content>
+          </SheetPrimitive.Portal>
+        </Sheet>
+      </div>
+    );
+  }
 
   return (
     <div
