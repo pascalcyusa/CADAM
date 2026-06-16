@@ -67,6 +67,12 @@ const MODEL_PRICES: Record<
     cacheRead: 0.31,
     cacheWrite: 1.25,
   },
+  'google/gemini-3.5-flash': {
+    input: 0.075,
+    output: 0.3,
+    cacheRead: 0.01875,
+    cacheWrite: 0.075,
+  },
 
   // OpenAI — prompt-cache reads at 50% of input.
   'openai/gpt-5.5': { input: 5, output: 20, cacheRead: 2.5, cacheWrite: 5 },
@@ -677,16 +683,16 @@ async function loadBranchFromDb({
 }
 
 async function generateConversationTitle({
-  anthropic,
+  google,
   firstMessage,
 }: {
-  anthropic: AnthropicProvider;
+  google: GoogleProvider;
   firstMessage: AppUIMessage;
 }) {
   const text = getParametricText(firstMessage.parts) || 'New conversation';
   try {
     const result = await generateText({
-      model: anthropic('claude-haiku-4-5'),
+      model: google('gemini-2.5-flash'),
       system:
         'Generate a short title for a 3D creation conversation. Return only the title.',
       prompt: text,
@@ -709,11 +715,11 @@ async function generateConversationTitle({
  * specific assistant turn.
  */
 async function generateConversationSuggestions({
-  anthropic,
+  google,
   branch,
   conversationType,
 }: {
-  anthropic: AnthropicProvider;
+  google: GoogleProvider;
   branch: AppUIMessage[];
   conversationType: 'parametric' | 'creative';
 }): Promise<string[]> {
@@ -731,7 +737,7 @@ async function generateConversationSuggestions({
   const summary = `User request: ${firstUserText.slice(0, 400)}\n\nMost recent assistant reply: ${lastAssistantText.slice(0, 400)}`;
   try {
     const result = await generateText({
-      model: anthropic('claude-haiku-4-5'),
+      model: google('gemini-2.5-flash'),
       system:
         conversationType === 'creative'
           ? 'Given a 3D mesh design conversation, return an array of exactly 2 follow-up prompts the user might want to send next. Each prompt is a concise instruction of 3 words or fewer, not a question. Return exactly 2 items — no more, no fewer.'
@@ -1319,10 +1325,10 @@ export async function handleAiChatRequest(req: Request) {
     execute: async ({ writer }) => {
       // Title (first user turn only) runs in parallel with the model
       // stream — fire-and-forget; the assistant doesn't wait on it.
-      if (isFirstUserTurn && env('ANTHROPIC_API_KEY')) {
+      if (isFirstUserTurn && env('GOOGLE_API_KEY')) {
         void emitConversationTitle({
           writer,
-          anthropic: providers.anthropic(),
+          google: providers.google(),
           supabaseClient,
           conversation,
           firstMessage: branchMessages[0],
@@ -1454,7 +1460,7 @@ export async function handleAiChatRequest(req: Request) {
             // continuation `onFinish` will fire suggestions for the real
             // final state. Avoids a wasted Haiku call AND prevents
             // mid-turn placeholder pills.
-            if (!hasPendingToolCall && env('ANTHROPIC_API_KEY')) {
+            if (!hasPendingToolCall && env('GOOGLE_API_KEY')) {
               // MUST be awaited (not `void`). `createUIMessageStream`
               // closes the SSE controller as soon as the merged stream
               // drains — and the merged stream resolves once this
@@ -1468,7 +1474,7 @@ export async function handleAiChatRequest(req: Request) {
               // tradeoff for getting pills delivered.
               await emitConversationSuggestions({
                 writer,
-                anthropic: providers.anthropic(),
+                google: providers.google(),
                 supabaseClient,
                 conversation,
                 branch: [
@@ -1500,19 +1506,19 @@ export async function handleAiChatRequest(req: Request) {
  */
 async function emitConversationTitle({
   writer,
-  anthropic,
+  google,
   supabaseClient,
   conversation,
   firstMessage,
 }: {
   writer: UIMessageStreamWriter<AppUIMessage>;
-  anthropic: AnthropicProvider;
+  google: GoogleProvider;
   supabaseClient: SupabaseAnon;
   conversation: ConversationAccess;
   firstMessage: AppUIMessage;
 }) {
   try {
-    const title = await generateConversationTitle({ anthropic, firstMessage });
+    const title = await generateConversationTitle({ google, firstMessage });
     await supabaseClient
       .from('conversations')
       .update({ title })
@@ -1542,20 +1548,20 @@ async function emitConversationTitle({
  */
 async function emitConversationSuggestions({
   writer,
-  anthropic,
+  google,
   supabaseClient,
   conversation,
   branch,
 }: {
   writer: UIMessageStreamWriter<AppUIMessage>;
-  anthropic: AnthropicProvider;
+  google: GoogleProvider;
   supabaseClient: SupabaseAnon;
   conversation: ConversationAccess;
   branch: AppUIMessage[];
 }) {
   try {
     const suggestions = await generateConversationSuggestions({
-      anthropic,
+      google,
       branch,
       conversationType: conversation.type,
     });

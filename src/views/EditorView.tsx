@@ -192,7 +192,7 @@ function ConversationEditor() {
     conversation.settings?.model ??
       (conversation.type === 'creative'
         ? 'quality'
-        : 'google/gemini-3.1-pro-preview'),
+        : 'google/gemini-3.5-flash'),
   );
   const [activePreview, setActivePreview] = useState<ActivePreview>(null);
   const [parameters, setParameters] = useState<Parameter[]>([]);
