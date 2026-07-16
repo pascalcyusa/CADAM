@@ -237,9 +237,9 @@ export function getInitials(fullName: string | null) {
 
 export const PARAMETRIC_MODELS: ModelConfig[] = [
   {
-    id: 'google/gemini-3.1-pro-preview',
-    name: 'Gemini 3.1 Pro',
-    description: 'Latest Google model with excellent multi-modal capabilities',
+    id: 'google/gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    description: 'Fast, low-cost Google model for parametric CAD generation',
     provider: 'Google',
     supportsTools: true,
     supportsThinking: true,
