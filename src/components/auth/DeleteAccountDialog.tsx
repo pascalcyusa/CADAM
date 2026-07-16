@@ -9,7 +9,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { supabase } from '@/lib/supabase';
+import { useNavigate } from '@tanstack/react-router';
+import { supabase, ssoProvider } from '@/lib/supabase';
 import * as Sentry from '@sentry/react';
 import { useToast } from '@/hooks/use-toast';
 import { useMutation } from '@tanstack/react-query';
@@ -33,6 +34,7 @@ export const DeleteAccountDialog = ({
 }) => {
   const [confirmText, setConfirmText] = useState('');
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
   const [selectedReason, setSelectedReason] =
@@ -47,7 +49,14 @@ export const DeleteAccountDialog = ({
         body: JSON.stringify({ reason: selectedReason }),
       });
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      // In SSO mode root is the app's only auth surface, so the deletion
+      // flow lands there. Navigate BEFORE the session dies: this dialog
+      // lives on a guarded route, and the AuthGuard would otherwise fire
+      // the provider redirect and sign the just-deleted user back in.
+      if (ssoProvider) {
+        await navigate({ to: '/' });
+      }
       // Sign out locally and redirect after deletion
       supabase.auth.signOut();
     },

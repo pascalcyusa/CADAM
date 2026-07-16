@@ -1,9 +1,10 @@
 import { useNavigate, Link } from '@tanstack/react-router';
-import { ArrowUpRight, LogIn } from 'lucide-react';
+import { LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, ssoProvider } from '@/lib/supabase';
+import { signInWithSsoProvider } from '@/lib/ssoAuth';
 import TextAreaChat from '@/components/TextAreaChat';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { useState, useMemo, useEffect } from 'react';
@@ -11,6 +12,8 @@ import { Model } from '@shared/types';
 import { MessageItem } from '../types/misc.ts';
 import { LimitReachedMessage } from '@/components/LimitReachedMessage';
 import { LowPromptsWarningMessage } from '@/components/LowPromptsWarningMessage';
+import { NewProductBanner } from '@/components/NewProductBanner';
+import { FreePlanTrialPill } from '@/components/FreePlanTrialPill';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
 import { SelectedItemsContext } from '@/contexts/SelectedItemsContext';
@@ -27,19 +30,6 @@ import { createAndCacheAiChat } from '@/hooks/useCachedAiChat';
 import type { AppUIMessage } from '@shared/chatAi';
 import { ensureInputRecords } from '@/lib/aiMessages';
 import { persistUserMessage } from '@/services/messageService';
-
-const EXTENSION_PILLS = [
-  {
-    href: 'https://cad.onshape.com/appstore/apps/Design%20&%20Documentation/690a8dc864e816c112aa66a0',
-    event: 'onshape_banner_click',
-    label: 'Onshape extension',
-  },
-  {
-    href: 'https://fusion.adam.new/install',
-    event: 'fusion_banner_click',
-    label: 'Fusion extension',
-  },
-] as const;
 
 export function PromptView() {
   const navigate = useNavigate();
@@ -112,6 +102,22 @@ export function PromptView() {
       return 'Good evening';
     }
   }, []); // Empty dependency array means it only calculates once per page load
+
+  // In SSO mode the provider redirect IS the sign-in: the existing signed-out
+  // affordances below fire it directly instead of navigating to the native
+  // auth routes (which bounce back to root in this mode). Same UI, same
+  // pixels — only where the click goes changes.
+  const { mutate: signInWithSso } = useMutation({
+    mutationFn: () => signInWithSsoProvider('/'),
+    onError: (error) => {
+      toast({
+        title: 'Whoopsies',
+        description:
+          error instanceof Error ? error.message : 'Something went wrong',
+        variant: 'destructive',
+      });
+    },
+  });
 
   const { mutate: handleGenerate, isPending: isGenerating } = useMutation({
     mutationFn: async (parts: AppUIMessage['parts']) => {
@@ -252,13 +258,17 @@ export function PromptView() {
           <div className="fixed right-4 top-4 z-10 flex flex-row gap-2">
             <Button
               variant="light"
-              onClick={() => navigate({ to: '/signup' })}
+              onClick={() =>
+                ssoProvider ? signInWithSso() : navigate({ to: '/signup' })
+              }
               className="w-auto"
             >
               Sign Up
             </Button>
             <Button
-              onClick={() => navigate({ to: '/signin' })}
+              onClick={() =>
+                ssoProvider ? signInWithSso() : navigate({ to: '/signin' })
+              }
               className="w-auto"
             >
               <LogIn className="mr-2 h-4 w-4" />
@@ -267,18 +277,26 @@ export function PromptView() {
           </div>
         )}
 
-        <main className="flex h-full w-full flex-col items-center justify-center px-4 md:px-8">
+        <main className="relative flex h-full w-full flex-col items-center justify-center px-4 md:px-8">
           <div className="mx-auto flex max-w-3xl flex-col items-center justify-center">
-            <h1
-              className={cn(
-                'mb-8 text-center text-2xl font-medium text-adam-text-primary md:text-3xl lg:text-4xl',
-                'motion-safe:transition-opacity motion-safe:duration-1000 motion-safe:ease-out',
-                isLoaded ? 'opacity-100' : 'opacity-0',
-              )}
-            >
-              {getTimeBasedGreeting}
-              {firstName ? `, ${firstName}` : ''}!
-            </h1>
+            {/* The pill floats above the greeting (absolute, out of flow) so
+                it mounting after billing resolves — or never showing for paid
+                users — never reflows the centered greeting. */}
+            <div className="relative flex flex-col items-center">
+              <div className="absolute bottom-full left-1/2 mb-16 w-max -translate-x-1/2">
+                <FreePlanTrialPill />
+              </div>
+              <h1
+                className={cn(
+                  'mb-8 text-center text-2xl font-medium text-adam-text-primary md:text-3xl lg:text-4xl',
+                  'motion-safe:transition-opacity motion-safe:duration-1000 motion-safe:ease-out',
+                  isLoaded ? 'opacity-100' : 'opacity-0',
+                )}
+              >
+                {getTimeBasedGreeting}
+                {firstName ? `, ${firstName}` : ''}!
+              </h1>
+            </div>
           </div>
           <div className="flex w-full flex-col items-center">
             <div className="w-full max-w-3xl space-y-4 pb-12">
@@ -293,6 +311,10 @@ export function PromptView() {
                   }}
                   onFocus={() => {
                     if (!user) {
+                      if (ssoProvider) {
+                        signInWithSso();
+                        return;
+                      }
                       navigate({ to: '/signin' });
                       return;
                     }
@@ -324,39 +346,16 @@ export function PromptView() {
                   </div>
                 )}
               </div>
-              {!isLoading && user && !limitReached && !lowPrompts && (
-                <div className="flex flex-wrap justify-center gap-2">
-                  {EXTENSION_PILLS.map(({ href, event, label }) => (
-                    <a
-                      key={event}
-                      href={href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={() => {
-                        try {
-                          posthog.capture(event, { location: 'prompt_view' });
-                        } catch {
-                          // Analytics failures (e.g. blocked by ad-blocker)
-                          // must never block the link's navigation.
-                        }
-                      }}
-                      className="group inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm text-adam-text-secondary transition-colors hover:border-adam-blue/40 hover:bg-adam-blue/10 hover:text-adam-text-primary"
-                    >
-                      <span>
-                        Try our{' '}
-                        <span className="font-medium text-adam-blue">
-                          {label}
-                        </span>
-                      </span>
-                      <ArrowUpRight className="h-3.5 w-3.5 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-                    </a>
-                  ))}
-                </div>
-              )}
               {!user && (
                 <p className="text-center text-sm text-gray-500">
                   <Link
                     to="/signin"
+                    onClick={(e) => {
+                      if (ssoProvider) {
+                        e.preventDefault();
+                        signInWithSso();
+                      }
+                    }}
                     className="!text-adam-blue hover:!text-adam-blue/80"
                   >
                     Sign in
@@ -364,6 +363,12 @@ export function PromptView() {
                   or{' '}
                   <Link
                     to="/signup"
+                    onClick={(e) => {
+                      if (ssoProvider) {
+                        e.preventDefault();
+                        signInWithSso();
+                      }
+                    }}
                     className="!text-adam-blue hover:!text-adam-blue/80"
                   >
                     create an account
@@ -371,6 +376,15 @@ export function PromptView() {
                   to start generating
                 </p>
               )}
+            </div>
+          </div>
+
+          {/* Float the banner in the gap between the (vertically centered)
+              composer and the bottom edge: a band over the lower third, with
+              the card centered inside it, instead of glued to bottom-0. */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[55%] flex items-center justify-center px-4 md:px-8">
+            <div className="pointer-events-auto w-full max-w-2xl">
+              <NewProductBanner />
             </div>
           </div>
         </main>

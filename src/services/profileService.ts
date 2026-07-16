@@ -1,7 +1,16 @@
+import { User } from '@supabase/supabase-js';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, ssoClaims } from '@/lib/supabase';
 import { Profile } from '@shared/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
+// Under SSO the display name is owned by the identity provider (Adam): the live
+// `name` claim from ssoClaims (GoTrue refreshes it every sign-in). NOT the
+// `full_name` claim — Adam's identity_data carries a stale full_name while
+// `name` is current. undefined off-SSO → the local profiles mirror wins.
+function ssoDisplayName(user: User | null): string | undefined {
+  return ssoClaims(user)?.name || undefined;
+}
 
 export function useProfile() {
   const { user } = useAuth();
@@ -24,6 +33,12 @@ export function useProfile() {
       return data;
     },
     enabled: !!user?.id,
+    // Every name read flows through here, so resolve it in one place: under SSO
+    // the provider's name wins over the local mirror (which is display-only).
+    select: (profile) => {
+      const name = ssoDisplayName(user);
+      return name ? { ...profile, full_name: name } : profile;
+    },
   });
 }
 

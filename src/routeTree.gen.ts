@@ -19,6 +19,7 @@ import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
 import { Route as ConfirmEmailRouteImport } from './routes/confirm-email'
 import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as LayoutIndexRouteImport } from './routes/_layout/index'
+import { Route as AssetsSplatRouteImport } from './routes/assets.$'
 import { Route as ApiTitleGeneratorRouteImport } from './routes/api/title-generator'
 import { Route as ApiPromptGeneratorRouteImport } from './routes/api/prompt-generator'
 import { Route as ApiParametricChatRouteImport } from './routes/api/parametric-chat'
@@ -37,6 +38,7 @@ import { Route as LayoutShareIdRouteImport } from './routes/_layout/share/$id'
 import { Route as LayoutAuthSubscriptionRouteImport } from './routes/_layout/_auth/subscription'
 import { Route as LayoutAuthSettingsRouteImport } from './routes/_layout/_auth/settings'
 import { Route as LayoutAuthHistoryRouteImport } from './routes/_layout/_auth/history'
+import { Route as ApiInternalAccountDeleteRouteImport } from './routes/api/internal/account/delete'
 import { Route as LayoutAuthEditorIdRouteImport } from './routes/_layout/_auth/editor/$id'
 
 const UpdatePasswordRoute = UpdatePasswordRouteImport.update({
@@ -87,6 +89,11 @@ const LayoutIndexRoute = LayoutIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => LayoutRoute,
+} as any)
+const AssetsSplatRoute = AssetsSplatRouteImport.update({
+  id: '/assets/$',
+  path: '/assets/$',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiTitleGeneratorRoute = ApiTitleGeneratorRouteImport.update({
   id: '/api/title-generator',
@@ -177,6 +184,12 @@ const LayoutAuthHistoryRoute = LayoutAuthHistoryRouteImport.update({
   path: '/history',
   getParentRoute: () => LayoutAuthRoute,
 } as any)
+const ApiInternalAccountDeleteRoute =
+  ApiInternalAccountDeleteRouteImport.update({
+    id: '/api/internal/account/delete',
+    path: '/api/internal/account/delete',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const LayoutAuthEditorIdRoute = LayoutAuthEditorIdRouteImport.update({
   id: '/editor/$id',
   path: '/editor/$id',
@@ -205,12 +218,14 @@ export interface FileRoutesByFullPath {
   '/api/parametric-chat': typeof ApiParametricChatRoute
   '/api/prompt-generator': typeof ApiPromptGeneratorRoute
   '/api/title-generator': typeof ApiTitleGeneratorRoute
+  '/assets/$': typeof AssetsSplatRoute
   '/history': typeof LayoutAuthHistoryRoute
   '/settings': typeof LayoutAuthSettingsRoute
   '/subscription': typeof LayoutAuthSubscriptionRoute
   '/share/$id': typeof LayoutShareIdRoute
   '/api/jackson-pollock/$': typeof ApiJacksonPollockSplatRoute
   '/editor/$id': typeof LayoutAuthEditorIdRoute
+  '/api/internal/account/delete': typeof ApiInternalAccountDeleteRoute
 }
 export interface FileRoutesByTo {
   '/confirm-email': typeof ConfirmEmailRoute
@@ -234,12 +249,14 @@ export interface FileRoutesByTo {
   '/api/parametric-chat': typeof ApiParametricChatRoute
   '/api/prompt-generator': typeof ApiPromptGeneratorRoute
   '/api/title-generator': typeof ApiTitleGeneratorRoute
+  '/assets/$': typeof AssetsSplatRoute
   '/history': typeof LayoutAuthHistoryRoute
   '/settings': typeof LayoutAuthSettingsRoute
   '/subscription': typeof LayoutAuthSubscriptionRoute
   '/share/$id': typeof LayoutShareIdRoute
   '/api/jackson-pollock/$': typeof ApiJacksonPollockSplatRoute
   '/editor/$id': typeof LayoutAuthEditorIdRoute
+  '/api/internal/account/delete': typeof ApiInternalAccountDeleteRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -265,6 +282,7 @@ export interface FileRoutesById {
   '/api/parametric-chat': typeof ApiParametricChatRoute
   '/api/prompt-generator': typeof ApiPromptGeneratorRoute
   '/api/title-generator': typeof ApiTitleGeneratorRoute
+  '/assets/$': typeof AssetsSplatRoute
   '/_layout/': typeof LayoutIndexRoute
   '/_layout/_auth/history': typeof LayoutAuthHistoryRoute
   '/_layout/_auth/settings': typeof LayoutAuthSettingsRoute
@@ -272,6 +290,7 @@ export interface FileRoutesById {
   '/_layout/share/$id': typeof LayoutShareIdRoute
   '/api/jackson-pollock/$': typeof ApiJacksonPollockSplatRoute
   '/_layout/_auth/editor/$id': typeof LayoutAuthEditorIdRoute
+  '/api/internal/account/delete': typeof ApiInternalAccountDeleteRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -297,12 +316,14 @@ export interface FileRouteTypes {
     | '/api/parametric-chat'
     | '/api/prompt-generator'
     | '/api/title-generator'
+    | '/assets/$'
     | '/history'
     | '/settings'
     | '/subscription'
     | '/share/$id'
     | '/api/jackson-pollock/$'
     | '/editor/$id'
+    | '/api/internal/account/delete'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/confirm-email'
@@ -326,12 +347,14 @@ export interface FileRouteTypes {
     | '/api/parametric-chat'
     | '/api/prompt-generator'
     | '/api/title-generator'
+    | '/assets/$'
     | '/history'
     | '/settings'
     | '/subscription'
     | '/share/$id'
     | '/api/jackson-pollock/$'
     | '/editor/$id'
+    | '/api/internal/account/delete'
   id:
     | '__root__'
     | '/_layout'
@@ -356,6 +379,7 @@ export interface FileRouteTypes {
     | '/api/parametric-chat'
     | '/api/prompt-generator'
     | '/api/title-generator'
+    | '/assets/$'
     | '/_layout/'
     | '/_layout/_auth/history'
     | '/_layout/_auth/settings'
@@ -363,6 +387,7 @@ export interface FileRouteTypes {
     | '/_layout/share/$id'
     | '/api/jackson-pollock/$'
     | '/_layout/_auth/editor/$id'
+    | '/api/internal/account/delete'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -386,7 +411,9 @@ export interface RootRouteChildren {
   ApiParametricChatRoute: typeof ApiParametricChatRoute
   ApiPromptGeneratorRoute: typeof ApiPromptGeneratorRoute
   ApiTitleGeneratorRoute: typeof ApiTitleGeneratorRoute
+  AssetsSplatRoute: typeof AssetsSplatRoute
   ApiJacksonPollockSplatRoute: typeof ApiJacksonPollockSplatRoute
+  ApiInternalAccountDeleteRoute: typeof ApiInternalAccountDeleteRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -460,6 +487,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof LayoutIndexRouteImport
       parentRoute: typeof LayoutRoute
+    }
+    '/assets/$': {
+      id: '/assets/$'
+      path: '/assets/$'
+      fullPath: '/assets/$'
+      preLoaderRoute: typeof AssetsSplatRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/title-generator': {
       id: '/api/title-generator'
@@ -587,6 +621,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutAuthHistoryRouteImport
       parentRoute: typeof LayoutAuthRoute
     }
+    '/api/internal/account/delete': {
+      id: '/api/internal/account/delete'
+      path: '/api/internal/account/delete'
+      fullPath: '/api/internal/account/delete'
+      preLoaderRoute: typeof ApiInternalAccountDeleteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_layout/_auth/editor/$id': {
       id: '/_layout/_auth/editor/$id'
       path: '/editor/$id'
@@ -653,7 +694,9 @@ const rootRouteChildren: RootRouteChildren = {
   ApiParametricChatRoute: ApiParametricChatRoute,
   ApiPromptGeneratorRoute: ApiPromptGeneratorRoute,
   ApiTitleGeneratorRoute: ApiTitleGeneratorRoute,
+  AssetsSplatRoute: AssetsSplatRoute,
   ApiJacksonPollockSplatRoute: ApiJacksonPollockSplatRoute,
+  ApiInternalAccountDeleteRoute: ApiInternalAccountDeleteRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

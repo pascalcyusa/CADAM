@@ -70,7 +70,7 @@ export function Layout() {
               The `!user` branch above returns early, so no `user` guard here. */}
           {location.pathname === '/' && (
             <div
-              className={`absolute z-20 transition-all duration-300 ease-in-out ${
+              className={`absolute z-20 flex items-center gap-2 transition-all duration-300 ease-in-out ${
                 isSidebarOpen && !isMobile
                   ? 'right-[2.25rem] top-[2.25rem]'
                   : 'right-3.5 top-3.5'

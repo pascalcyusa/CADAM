@@ -5,6 +5,7 @@ import { chatTools, type AppUIMessage, type AppTools } from '@shared/chatAi';
 import { cleanAssistantText, getParametricText } from '@shared/parametricParts';
 import { imageIdFromFilename, imageStoragePath } from '@shared/imageRefs';
 import { normalizeConversationSuggestions } from '@shared/suggestions';
+import { normalizeModelId } from '@shared/models';
 import type { Conversation, Message, MeshFileType, Model } from '@shared/types';
 import {
   convertToModelMessages,
@@ -52,7 +53,9 @@ const MODEL_PRICES: Record<
   { input: number; output: number; cacheRead?: number; cacheWrite?: number }
 > = {
   // Anthropic
+  'anthropic/claude-fable-5': { input: 10, output: 50 },
   'anthropic/claude-opus-4.8': { input: 5, output: 25 },
+  'anthropic/claude-sonnet-5': { input: 2, output: 10 },
   'anthropic/claude-opus-4': { input: 15, output: 75 },
   'anthropic/claude-sonnet-4.6': { input: 3, output: 15 },
   'anthropic/claude-sonnet-4.5': { input: 3, output: 15 },
@@ -74,11 +77,22 @@ const MODEL_PRICES: Record<
     cacheWrite: 0.075,
   },
 
-  // OpenAI — prompt-cache reads at 50% of input.
-  'openai/gpt-5.5': { input: 5, output: 20, cacheRead: 2.5, cacheWrite: 5 },
+  // OpenAI — prompt-cache reads at 10% of input, cache writes at 1.25x.
+  'openai/gpt-5.6-sol': {
+    input: 5,
+    output: 30,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
+  },
+
+  // xAI — cached input reads at 25% of input; no cache-write surcharge.
+  'x-ai/grok-4.5': { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 2 },
 
   // MoonshotAI
   'moonshotai/kimi-k2.6': { input: 0.6, output: 2.5 },
+
+  // Z.AI
+  'z-ai/glm-5.2': { input: 1.2, output: 4.1 },
 };
 
 const FALLBACK_MODEL_PRICE = { input: 15, output: 75 };
@@ -321,6 +335,20 @@ function providerFor(modelId: string): ChatProvider {
 type AnthropicProvider = ReturnType<typeof createAnthropic>;
 type GoogleProvider = ReturnType<typeof createGoogleGenerativeAI>;
 
+// The Vercel AI SDK's Anthropic provider expects ANTHROPIC_BASE_URL to already
+// include the "/v1" path segment (its built-in default is
+// "https://api.anthropic.com/v1"). Some environments — notably the Claude
+// Code/Desktop app — export the bare host "https://api.anthropic.com", which is
+// what the official @anthropic-ai/sdk wants but makes this provider POST to
+// "/messages" and 404. Normalize a "/v1"-less override so it still works; return
+// undefined when unset so the SDK keeps owning its own default.
+function normalizedAnthropicBaseURL(): string | undefined {
+  const raw = env('ANTHROPIC_BASE_URL').trim();
+  if (!raw) return undefined;
+  const base = raw.replace(/\/+$/, '');
+  return base.endsWith('/v1') ? base : `${base}/v1`;
+}
+
 type ChatProviders = {
   anthropic: () => AnthropicProvider;
   google: () => GoogleProvider;
@@ -333,9 +361,13 @@ function createChatProviders(): ChatProviders {
   let openrouter: ReturnType<typeof createOpenRouter> | undefined;
   return {
     anthropic: () => {
-      anthropic ??= createAnthropic({
-        apiKey: requiredEnv('ANTHROPIC_API_KEY'),
-      });
+      if (!anthropic) {
+        const baseURL = normalizedAnthropicBaseURL();
+        anthropic = createAnthropic({
+          apiKey: requiredEnv('ANTHROPIC_API_KEY'),
+          ...(baseURL ? { baseURL } : {}),
+        });
+      }
       return anthropic;
     },
     google: () => {
@@ -428,11 +460,12 @@ function buildChatModel(
 
 // Capability gates below accept either the OpenRouter alias (`anthropic/claude-…`)
 // or the bare Anthropic ID — strip the prefix here so every gate is called the
-// same way regardless of which form the caller has on hand.
+// same way regardless of which form the caller has on hand. Drop *any* provider
+// prefix (everything up to the last "/"), not just "anthropic/", so a model
+// routed through another provider (e.g. "openrouter/anthropic/claude-fable-5")
+// still matches the `^claude-…` regexes instead of silently slipping past them.
 function bareModelId(modelId: string): string {
-  const id = modelId.startsWith('anthropic/')
-    ? modelId.slice('anthropic/'.length)
-    : modelId;
+  const id = modelId.slice(modelId.lastIndexOf('/') + 1);
   // Anthropic's API uses dashes ("claude-opus-4-6"); the OpenRouter alias
   // uses dots ("claude-opus-4.6"). Normalize so the version regexes match
   // either form.
@@ -457,12 +490,18 @@ function usesAdaptiveAnthropicThinking(modelId: string) {
   return match ? Number(match[1]) >= 6 : false;
 }
 
+// The reasoning-tier Claude 5 models (Fable, Mythos) reject a forced
+// `tool_choice` outright ("tool_choice forces tool use is not compatible with
+// this model"). Other Claude 5 tiers — notably Sonnet 5 — accept a forced
+// tool_choice on the first-party API, provided thinking is disabled for that
+// step (see the per-step override in the parametric flow).
+function rejectsForcedToolChoice(modelId: string): boolean {
+  return /^claude-(?:fable|mythos)\b/.test(bareModelId(modelId));
+}
+
 // Whether a model accepts a forced `tool_choice` (type: "tool" / "any").
-// The Claude 5 generation rejects forced tool use with "tool_choice forces
-// tool use is not compatible with this model" — for those we must fall back
-// to auto tool choice and steer via the system prompt.
 function supportsForcedToolChoice(modelId: string): boolean {
-  return !isClaude5Model(modelId);
+  return !rejectsForcedToolChoice(modelId);
 }
 
 function priceFor(modelId: string) {
@@ -510,11 +549,16 @@ function usdCostFromUsage(modelId: string, usage: LanguageModelUsage): number {
   );
 }
 
+function billingMultiplier(): number {
+  const raw = Number(env('CADAM_BILLING_MULTIPLIER'));
+  return Number.isFinite(raw) && raw > 0 ? raw : 1;
+}
+
 function billingTokensFromUsage(
   modelId: string,
   usage: LanguageModelUsage,
 ): number {
-  const usdCost = usdCostFromUsage(modelId, usage);
+  const usdCost = usdCostFromUsage(modelId, usage) * billingMultiplier();
   return Math.max(1, Math.ceil(usdCost / USD_PER_BILLING_TOKEN));
 }
 
@@ -920,7 +964,7 @@ function chatModel(conversation: ConversationAccess, model: Model) {
   if (conversation.type === 'creative') {
     return 'anthropic/claude-sonnet-4.5';
   }
-  return model;
+  return normalizeModelId(model);
 }
 
 function systemPrompt(conversation: ConversationAccess) {
@@ -1187,15 +1231,23 @@ export async function handleAiChatRequest(req: Request) {
     thinking: thinkingEnabled,
   };
 
-  // Parametric step 0 normally pins `build_parametric_model` via a forced
-  // tool_choice. Models that reject forced tool use (Claude 5 — Fable/Mythos)
-  // fall back to auto tool choice, where the model *might* answer with text
-  // instead of building. Track that fallback so we can detect — and log — a
-  // turn that finished without ever calling the build tool.
+  // Parametric step 0 pins `build_parametric_model` via a forced tool_choice
+  // whenever the model accepts one. Anthropic rejects a forced tool_choice
+  // while thinking is on ("Thinking may not be enabled when tool_choice forces
+  // tool use"), so for thinking-enabled Anthropic models we disable thinking
+  // for just that first step (see `prepareStep` below); later steps keep their
+  // adaptive thinking. Only the reasoning-tier Claude 5 models (Fable/Mythos),
+  // which reject forced tool use outright, fall back to auto tool choice and
+  // rely on the system prompt to steer the build call — a fragile path where
+  // the model *might* answer with text instead of building. Track that fallback
+  // so we can detect — and log — a turn that finished without building.
+  const forceBuildToolChoice = supportsForcedToolChoice(actualModelId);
+  const disableThinkingForBuildStep =
+    forceBuildToolChoice && thinkingEnabled && resolvedProvider === 'anthropic';
   const usingAutoToolChoiceFallback =
     conversation.type === 'parametric' &&
     leafRole === 'user' &&
-    !supportsForcedToolChoice(actualModelId);
+    !forceBuildToolChoice;
 
   const result = streamText({
     model: chatLanguageModel,
@@ -1209,18 +1261,29 @@ export async function handleAiChatRequest(req: Request) {
         leafRole === 'user' &&
         stepNumber === 0
       ) {
-        // Restrict the toolset to the build tool on the first step. Models
-        // that accept a forced tool_choice get it pinned; models that reject
-        // forced tool use (Claude 5 — Fable/Mythos) fall back to auto and rely
-        // on the system prompt to call build_parametric_model.
+        // Restrict the toolset to the build tool on the first step. Models that
+        // accept a forced tool_choice get it pinned; the reasoning-tier Claude 5
+        // models (Fable/Mythos) reject forced tool use and fall back to auto,
+        // relying on the system prompt to call build_parametric_model.
+        // When pinning the tool on a thinking-enabled Anthropic model, thinking
+        // must be off for this step (Anthropic rejects forced tool use while
+        // thinking is on) — disable it here only; later steps keep the adaptive
+        // thinking configured in buildChatModel.
         return {
           activeTools: ['build_parametric_model' as never],
-          ...(supportsForcedToolChoice(actualModelId)
+          ...(forceBuildToolChoice
             ? {
                 toolChoice: {
                   type: 'tool' as const,
                   toolName: 'build_parametric_model' as never,
                 },
+                ...(disableThinkingForBuildStep
+                  ? {
+                      providerOptions: {
+                        anthropic: { thinking: { type: 'disabled' as const } },
+                      },
+                    }
+                  : {}),
               }
             : {}),
         };
@@ -1348,30 +1411,6 @@ export async function handleAiChatRequest(req: Request) {
               billingTokens,
             };
 
-            try {
-              // Drains the user's remaining balance to zero if the
-              // request cost more than they had. The billing service
-              // accepts the partial deduction, writes an audit row as
-              // `<operation>_partial`, and the pre-flight gate above
-              // will block the next request. Not an error path —
-              // intentional terminal state.
-              await billing.consume(user.email!, {
-                tokens: billingTokens,
-                operation:
-                  conversation.type === 'creative' ? 'chat' : 'parametric',
-                referenceId: responseMessage.id,
-              });
-            } catch (error) {
-              logError(error, {
-                functionName: 'ai-chat',
-                statusCode:
-                  error instanceof BillingClientError ? error.status : 502,
-                userId: user.id,
-                conversationId: conversation.id,
-                additionalContext: { operation: 'billing_consume' },
-              });
-            }
-
             const finalizedParts =
               conversation.type === 'parametric'
                 ? dropTextFromParametricBuildMessage(
@@ -1391,18 +1430,28 @@ export async function handleAiChatRequest(req: Request) {
             // `input-available` (pending).
             const hasPendingToolCall = hasPendingClientToolCall(finalizedParts);
 
+            // Persist the row BEFORE billing. `build_parametric_model` is
+            // resolved client-side: the browser compiles, then UPDATEs this
+            // row to attach the tool output (`persistAssistantParts`). That
+            // UPDATE matches nothing until this INSERT lands, so the browser
+            // retries on a ~1.7s window and otherwise surfaces "Couldn't save
+            // this step". `billing.consume` is a non-fatal external round-trip
+            // (caught + logged below) and the persist doesn't depend on it —
+            // running it after keeps its latency out of the browser's race
+            // window. The row must exist as soon as the stream closes.
+            //
             // What to do with this row — see `decidePersistAction`:
             //   insert → new assistant row.
             //   update → continuation with everything resolved / pure text.
             //   skip   → continuation still ending in a pending CLIENT tool.
             //            The browser persists the `output-available` version
             //            itself (`onToolOutput`); a server write here — delayed
-            //            behind `result.totalUsage` + `billing.consume` — would
-            //            land last and clobber it back to `input-available`,
-            //            leaving a dangling tool call that 500s the next send.
-            //            Mid-loop builds dodge the race because the client's
-            //            compile takes seconds; the terminal `answer_user` is
-            //            instant, so the server reliably wins. Defer to client.
+            //            behind `result.totalUsage` — would land last and
+            //            clobber it back to `input-available`, leaving a
+            //            dangling tool call that 500s the next send. Mid-loop
+            //            builds dodge the race because the client's compile
+            //            takes seconds; the terminal `answer_user` is instant,
+            //            so the server reliably wins. Defer to client.
             //
             // Insert places a NEW assistant under whatever the leaf was: for a
             // fresh user turn that's the user message; for a retry (client
@@ -1451,6 +1500,31 @@ export async function handleAiChatRequest(req: Request) {
                 userId: user.id,
                 conversationId: conversation.id,
                 additionalContext: { operation: 'persist_response_message' },
+              });
+            }
+
+            try {
+              // Drains the user's remaining balance to zero if the
+              // request cost more than they had. The billing service
+              // accepts the partial deduction, writes an audit row as
+              // `<operation>_partial`, and the pre-flight gate above
+              // will block the next request. Not an error path —
+              // intentional terminal state. Runs after the persist above so
+              // its latency never delays the row the client is waiting on.
+              await billing.consume(user.email!, {
+                tokens: billingTokens,
+                operation:
+                  conversation.type === 'creative' ? 'chat' : 'parametric',
+                referenceId: responseMessage.id,
+              });
+            } catch (error) {
+              logError(error, {
+                functionName: 'ai-chat',
+                statusCode:
+                  error instanceof BillingClientError ? error.status : 502,
+                userId: user.id,
+                conversationId: conversation.id,
+                additionalContext: { operation: 'billing_consume' },
               });
             }
 
